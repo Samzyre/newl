@@ -1,0 +1,42 @@
+name: Rust
+
+on:
+  push:
+    # branches: master
+    paths: "**.rs"
+  pull_request:
+    # branches: master
+    paths: "**.rs"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: rust-toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          # Rust toolchain name.
+          # If this is not given, the action will try and install the version specified in the `rust-toolchain` file.
+          toolchain: nightly
+          # Set installed toolchain as default
+          default: nightly
+          # Name of the group of components to be installed for a new toolchain
+          profile: minimal
+          # Comma-separated list of components to be additionally installed for a new toolchain
+          components: rustfmt
+
+      - name: Cargo build
+        run: cargo +nightly build --verbose
+
+      - name: Cargo test
+        run: cargo +nightly test --verbose
+
+      - name: Cargo formatting check
+        run: cargo +nightly fmt -- --check --verbose
