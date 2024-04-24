@@ -1,13 +1,17 @@
-#![feature(iter_from_coroutine)]
 #![feature(coroutines)]
+#![feature(iter_from_coroutine)]
 
+use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::{env, fs};
 
 use anyhow::{Ok, Result};
 use clap::{Arg, ArgAction, Command};
+
+const CR: u8 = 0x0D;
+const LF: u8 = 0x0A;
 
 fn cli() -> Command {
     Command::new(clap::crate_name!())
@@ -39,7 +43,7 @@ fn cli() -> Command {
                 .long("eol")
                 .help("Set line ending sequence to convert to.")
                 .value_name("EOL")
-                .value_parser(["LF", "CRLF"])
+                .value_parser(["LF", "CRLF", "CR"])
                 .default_value("LF")
                 .ignore_case(true)
                 .global(true),
@@ -104,6 +108,7 @@ fn exit_with_error(msg: impl std::fmt::Display) -> ! {
 /// Read stdin input and write to `w` with the set end-of-line sequence.
 fn stdin_to_output(mut w: impl Write, eol: Eol) -> Result<()> {
     // NOTE: Windows stdin impl only supports UTF-8.
+    // TODO: Use byte transformer instead of lines iter.
     let stdin = std::io::stdin().lock();
     let mut lines = stdin.lines().peekable();
     while let Some(line) = lines.next() {
@@ -118,15 +123,21 @@ fn stdin_to_output(mut w: impl Write, eol: Eol) -> Result<()> {
     Ok(())
 }
 
-/// Apply conversion to a file, this assumes that path is an accessible file.
+/// Apply a conversion to a file, this assumes that path is an accessible file.
 fn process_file(path: &Path, eol: Eol) -> Result<()> {
-    todo!("wip");
     debug_assert!(path.is_file());
-    let input = fs::File::open(path)?;
-    let mut input = BufReader::new(input);
-    let mut output = tempfile::spooled_tempfile(4_194_304);
-    let mut buf = Vec::with_capacity(4_194_304);
-    output.write_all(&buf)?;
+    let input = File::open(path)?;
+    let input = BufReader::new(input);
+    let input = input
+        .bytes()
+        .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
+    let temp = temp_file::empty();
+    let output = OpenOptions::new().write(true).open(temp.path())?;
+    let mut output = BufWriter::new(output);
+    let transform = eol.transform_fn();
+    transform(input, &mut output)?;
+    output.flush()?;
+    fs::copy(temp.path(), path)?;
     Ok(())
 }
 
@@ -168,7 +179,8 @@ fn main() -> Result<()> {
             let stdout = std::io::stdout().lock();
             stdin_to_output(stdout, eol).unwrap_or_else(|e| exit_with_error(e));
         };
-        std::process::exit(0);
+
+        return Ok(());
     }
 
     // Base command:
@@ -178,15 +190,30 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
+    if matches.get_many::<String>("exclude").is_some() {
+        todo!("wip"); // TODO: To be implemented.
+    }
+
+    if matches.get_one::<String>("output").is_some() {
+        todo!("wip"); // TODO: To be implemented.
+    }
+
     let patterns = std::iter::from_coroutine(|| {
         if let Some(values) = matches.get_many::<String>("include") {
             for pat in values {
                 yield glob::glob_with(pat, glob_options);
             }
         } else {
-            yield glob::glob_with("**/*", glob_options);
+            eprintln!("No included files.");
         }
     });
+
+    // This ensures that glob patterns are correct before doing any work.
+    let paths = patterns
+        .flat_map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
+        .map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
+        .filter(|p| p.is_file())
+        .collect::<Vec<_>>();
 
     if verbose {
         eprintln!("Dry-run: {dry_run}");
@@ -194,22 +221,17 @@ fn main() -> Result<()> {
     }
 
     let mut stdout = std::io::stdout().lock();
-    for paths in patterns {
-        for path in paths
-            .unwrap_or_else(|e| exit_with_error(e))
-            .map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
-            .filter(|p| p.is_file())
-        {
-            if dry_run {
-                writeln!(stdout, "{}", path.display())?;
-                continue;
-            }
-            if verbose {
-                eprintln!("{}", path.display());
-            }
-            process_file(&path, eol)?;
+    for path in paths {
+        if dry_run {
+            writeln!(stdout, "{}", path.display())?;
+            continue;
         }
+        if verbose {
+            eprintln!("{}", path.display());
+        }
+        process_file(&path, eol)?;
     }
+
     Ok(())
 }
 
@@ -218,6 +240,7 @@ fn main() -> Result<()> {
 enum Eol {
     Lf,
     Crlf,
+    Cr,
 }
 
 impl Eol {
@@ -225,6 +248,33 @@ impl Eol {
         match self {
             Eol::Lf => "\n",
             Eol::Crlf => "\r\n",
+            Eol::Cr => "\r",
+        }
+    }
+
+    fn transform_fn<B: Iterator<Item = u8>, W: Write>(&self) -> fn(B, &mut W) -> Result<()> {
+        fn convert(
+            bytes: impl Iterator<Item = u8>,
+            mut writer: impl Write,
+            target: &[u8],
+        ) -> Result<()> {
+            let mut iter = bytes.peekable();
+            while let Some(byte) = iter.next() {
+                if byte == LF {
+                    writer.write_all(target)?;
+                } else if byte == CR {
+                    _ = iter.next_if(|&n| n == LF);
+                    writer.write_all(target)?;
+                } else {
+                    writer.write_all(&[byte])?;
+                }
+            }
+            Ok(())
+        }
+        match self {
+            Eol::Lf => |b, w| convert(b, w, &[LF]),
+            Eol::Crlf => |b, w| convert(b, w, &[CR, LF]),
+            Eol::Cr => |b, w| convert(b, w, &[CR]),
         }
     }
 }
@@ -236,6 +286,7 @@ impl std::str::FromStr for Eol {
         match s.to_ascii_lowercase().as_str() {
             "lf" => Ok(Eol::Lf),
             "crlf" => Ok(Eol::Crlf),
+            "cr" => Ok(Eol::Cr),
             _ => anyhow::bail!("Unknown end-of-line sequence"),
         }
     }
@@ -246,6 +297,46 @@ impl std::fmt::Display for Eol {
         write!(f, "{}", match self {
             Eol::Lf => "LF",
             Eol::Crlf => "CRLF",
+            Eol::Cr => "CR",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test(eol: Eol, input: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let t = eol.transform_fn();
+        t(input.bytes().map(|r| r.unwrap()), &mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn transform_lf() {
+        assert_eq!(test(Eol::Lf, b""), b"");
+        assert_eq!(test(Eol::Lf, b"abc"), b"abc");
+        assert_eq!(test(Eol::Lf, b"\n"), b"\n");
+        assert_eq!(test(Eol::Lf, b"\r\n"), b"\n");
+        assert_eq!(test(Eol::Lf, b"x\rx\n"), b"x\nx\n");
+    }
+
+    #[test]
+    fn transform_crlf() {
+        assert_eq!(test(Eol::Crlf, b""), b"");
+        assert_eq!(test(Eol::Crlf, b"abc"), b"abc");
+        assert_eq!(test(Eol::Crlf, b"\n"), b"\r\n");
+        assert_eq!(test(Eol::Crlf, b"\r\n"), b"\r\n");
+        assert_eq!(test(Eol::Crlf, b"x\rx\n"), b"x\r\nx\r\n");
+    }
+
+    #[test]
+    fn transform_cr() {
+        assert_eq!(test(Eol::Cr, b""), b"");
+        assert_eq!(test(Eol::Cr, b"abc"), b"abc");
+        assert_eq!(test(Eol::Cr, b"\n"), b"\r");
+        assert_eq!(test(Eol::Cr, b"\r\n"), b"\r");
+        assert_eq!(test(Eol::Cr, b"x\rx\n"), b"x\rx\r");
     }
 }
