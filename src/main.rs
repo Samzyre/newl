@@ -198,15 +198,18 @@ fn main() -> Result<()> {
         todo!("wip"); // TODO: To be implemented.
     }
 
-    let patterns = std::iter::from_coroutine(|| {
-        if let Some(values) = matches.get_many::<String>("include") {
-            for pat in values {
-                yield glob::glob_with(pat, glob_options);
+    let patterns = std::iter::from_coroutine(
+        #[coroutine]
+        || {
+            if let Some(values) = matches.get_many::<String>("include") {
+                for pat in values {
+                    yield glob::glob_with(pat, glob_options);
+                }
+            } else {
+                eprintln!("No included files.");
             }
-        } else {
-            eprintln!("No included files.");
-        }
-    });
+        },
+    );
 
     // This ensures that glob patterns are correct before doing any work.
     let paths = patterns
