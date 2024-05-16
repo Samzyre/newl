@@ -320,6 +320,7 @@ mod tests {
         assert_eq!(test(Eol::Lf, b"\n"), b"\n");
         assert_eq!(test(Eol::Lf, b"\r\n"), b"\n");
         assert_eq!(test(Eol::Lf, b"x\rx\n"), b"x\nx\n");
+        assert_eq!(test(Eol::Lf, b"\r\n\r"), b"\n\n");
     }
 
     #[test]
@@ -329,6 +330,7 @@ mod tests {
         assert_eq!(test(Eol::Crlf, b"\n"), b"\r\n");
         assert_eq!(test(Eol::Crlf, b"\r\n"), b"\r\n");
         assert_eq!(test(Eol::Crlf, b"x\rx\n"), b"x\r\nx\r\n");
+        assert_eq!(test(Eol::Crlf, b"\r\n\r"), b"\r\n\r\n");
     }
 
     #[test]
@@ -338,5 +340,6 @@ mod tests {
         assert_eq!(test(Eol::Cr, b"\n"), b"\r");
         assert_eq!(test(Eol::Cr, b"\r\n"), b"\r");
         assert_eq!(test(Eol::Cr, b"x\rx\n"), b"x\rx\r");
+        assert_eq!(test(Eol::Cr, b"\r\n\r"), b"\r\r");
     }
 }
