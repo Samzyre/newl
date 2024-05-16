@@ -1,6 +1,4 @@
-#![feature(coroutines)]
-#![feature(iter_from_coroutine)]
-
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::io::{BufReader, BufWriter};
@@ -190,33 +188,32 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    if matches.get_many::<String>("exclude").is_some() {
-        todo!("wip"); // TODO: To be implemented.
-    }
-
     if matches.get_one::<String>("output").is_some() {
         todo!("wip"); // TODO: To be implemented.
     }
 
-    let patterns = std::iter::from_coroutine(
-        #[coroutine]
-        || {
-            if let Some(values) = matches.get_many::<String>("include") {
-                for pat in values {
-                    yield glob::glob_with(pat, glob_options);
-                }
-            } else {
-                eprintln!("No included files.");
-            }
-        },
-    );
+    let excluded = match matches.get_many::<String>("exclude") {
+        Some(values) => values
+            .flat_map(|p| glob::glob_with(p, glob_options).unwrap_or_else(|e| exit_with_error(e)))
+            .map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
+            .filter(|p| p.is_file())
+            .collect::<HashSet<_>>(),
+        None => HashSet::new(),
+    };
 
     // This ensures that glob patterns are correct before doing any work.
-    let paths = patterns
-        .flat_map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
-        .map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
-        .filter(|p| p.is_file())
-        .collect::<Vec<_>>();
+    let paths = match matches.get_many::<String>("include") {
+        Some(values) => values
+            .flat_map(|p| glob::glob_with(p, glob_options).unwrap_or_else(|e| exit_with_error(e)))
+            .map(|p| p.unwrap_or_else(|e| exit_with_error(e)))
+            .filter(|p| p.is_file())
+            .filter(|p| !excluded.contains(p))
+            .collect::<Vec<_>>(),
+        None => {
+            eprintln!("No included files.");
+            Vec::new()
+        },
+    };
 
     if verbose {
         eprintln!("Dry-run: {dry_run}");
