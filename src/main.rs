@@ -47,6 +47,14 @@ fn cli() -> Command {
                 .global(true),
         )
         .arg(
+            Arg::new("debug")
+                .short('g')
+                .long("debug")
+                .help("Output bytes as debug representation.")
+                .global(true)
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("output")
                 .short('o')
                 .long("output")
@@ -141,8 +149,10 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| exit_with_error("Missing end-of-line sequence"))
         .parse()
         .unwrap_or_else(|e| exit_with_error(e));
+    let debug = matches.get_flag("debug");
     if verbose {
         eprintln!("Target sequence: {eol}");
+        eprintln!("Output debug: {debug}");
     }
 
     // Subcommands:
