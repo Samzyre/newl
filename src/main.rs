@@ -106,19 +106,12 @@ fn exit_with_error(msg: impl std::fmt::Display) -> ! {
 /// Read stdin input and write to `w` with the set end-of-line sequence.
 fn stdin_to_output(mut w: impl Write, eol: Eol) -> Result<()> {
     // NOTE: Windows stdin impl only supports UTF-8.
-    // TODO: Use byte transformer instead of lines iter.
     let stdin = std::io::stdin().lock();
-    let mut lines = stdin.lines().peekable();
-    while let Some(line) = lines.next() {
-        let line = line.unwrap_or_else(|e| exit_with_error(e));
-        let eol = if lines.peek().is_some() {
-            eol.sequence()
-        } else {
-            ""
-        };
-        write!(w, "{line}{eol}")?;
-    }
-    Ok(())
+    let bytes = stdin
+        .bytes()
+        .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
+    let transform = eol.transform_fn();
+    transform(bytes, &mut w)
 }
 
 /// Apply a conversion to a file, this assumes that path is an accessible file.
@@ -148,7 +141,6 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| exit_with_error("Missing end-of-line sequence"))
         .parse()
         .unwrap_or_else(|e| exit_with_error(e));
-
     if verbose {
         eprintln!("Target sequence: {eol}");
     }
@@ -157,11 +149,11 @@ fn main() -> Result<()> {
     if let Some(sub_matches) = matches.subcommand_matches("stdin") {
         if let Some(output) = sub_matches.get_one::<String>("file") {
             let output = std::path::PathBuf::from(output);
-            if !output.is_file() {
+            if output.exists() && !output.is_file() {
                 exit_with_error("Output path must be a file.")
             };
             if verbose {
-                eprintln!("Output: {}", output.display());
+                eprintln!("Output target: {}", output.display());
             }
             let file = fs::OpenOptions::new()
                 .create(true)
@@ -170,9 +162,9 @@ fn main() -> Result<()> {
                 .open(output)
                 .unwrap_or_else(|e| exit_with_error(e));
             stdin_to_output(file, eol).unwrap_or_else(|e| exit_with_error(e));
-        } else {
+        } else if sub_matches.get_flag("stdout") {
             if verbose {
-                eprintln!("Output: stdout");
+                eprintln!("Output target: stdout");
             }
             let stdout = std::io::stdout().lock();
             stdin_to_output(stdout, eol).unwrap_or_else(|e| exit_with_error(e));
