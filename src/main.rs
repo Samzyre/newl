@@ -246,14 +246,6 @@ enum Eol {
 }
 
 impl Eol {
-    fn sequence(&self) -> &str {
-        match self {
-            Eol::Lf => "\n",
-            Eol::Crlf => "\r\n",
-            Eol::Cr => "\r",
-        }
-    }
-
     fn transform_fn<B: Iterator<Item = u8>, W: Write>(&self) -> fn(B, &mut W) -> Result<()> {
         fn convert(
             bytes: impl Iterator<Item = u8>,
