@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
-use std::io::{BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter};
 use std::path::Path;
 use std::{env, fs};
 
@@ -47,14 +47,6 @@ fn cli() -> Command {
                 .global(true),
         )
         .arg(
-            Arg::new("debug")
-                .short('g')
-                .long("debug")
-                .help("Output bytes as debug representation.")
-                .global(true)
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
             Arg::new("output")
                 .short('o')
                 .long("output")
@@ -71,9 +63,17 @@ fn cli() -> Command {
         )
         .arg(
             Arg::new("dry-run")
-                .short('d')
+                .short('n')
                 .long("dry-run")
                 .help("Print filepaths that would be affected, without modifying files.")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("debug")
+                .short('d')
+                .long("debug")
+                .help("Print output bytes as debug representation to stdout.")
+                .global(true)
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -92,7 +92,7 @@ fn cli() -> Command {
                         .help("Output filepath.")
                         .value_name("FILE")
                         .num_args(1)
-                        .required(true),
+                        .required_unless_present("debug"),
                 )
                 .arg(
                     Arg::new("stdout")
@@ -112,14 +112,15 @@ fn exit_with_error(msg: impl std::fmt::Display) -> ! {
 }
 
 /// Read stdin input and write to `w` with the set end-of-line sequence.
-fn stdin_to_output(mut w: impl Write, eol: Eol) -> Result<()> {
+fn stdin_to_output(output: impl Write + 'static, eol: Eol, debug: bool) -> Result<()> {
     // NOTE: Windows stdin impl only supports UTF-8.
-    let stdin = std::io::stdin().lock();
+    let stdin = io::stdin().lock();
     let bytes = stdin
         .bytes()
         .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
+    let mut output = writer(output, debug);
     let transform = eol.transform_fn();
-    transform(bytes, &mut w)
+    transform(bytes, &mut output)
 }
 
 /// Apply a conversion to a file, this assumes that path is an accessible file.
@@ -140,6 +141,35 @@ fn process_file(path: &Path, eol: Eol) -> Result<()> {
     Ok(())
 }
 
+fn writer<W: Write + 'static>(writer: W, debug: bool) -> Box<dyn Write> {
+    if debug {
+        struct DebugWriter<W: Write> {
+            writer: W,
+        }
+        impl<W: Write> Write for DebugWriter<W> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                for &byte in buf {
+                    if byte == LF {
+                        self.writer.write_all(b"\\n")?;
+                    } else if byte == CR {
+                        self.writer.write_all(b"\\r")?;
+                    } else {
+                        self.writer.write_all(&[byte])?;
+                    }
+                }
+                io::Result::Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.writer.flush()
+            }
+        }
+        Box::new(DebugWriter { writer })
+    } else {
+        Box::new(writer)
+    }
+}
+
 // TODO: Use a logger for verbose.
 fn main() -> Result<()> {
     let matches = cli().get_matches();
@@ -157,7 +187,13 @@ fn main() -> Result<()> {
 
     // Subcommands:
     if let Some(sub_matches) = matches.subcommand_matches("stdin") {
-        if let Some(output) = sub_matches.get_one::<String>("file") {
+        if debug {
+            if verbose {
+                eprintln!("Output target: stdout");
+            }
+            let stdout = io::stdout().lock();
+            stdin_to_output(stdout, eol, debug).unwrap_or_else(|e| exit_with_error(e));
+        } else if let Some(output) = sub_matches.get_one::<String>("file") {
             let output = std::path::PathBuf::from(output);
             if output.exists() && !output.is_file() {
                 exit_with_error("Output path must be a file.")
@@ -171,13 +207,13 @@ fn main() -> Result<()> {
                 .truncate(true)
                 .open(output)
                 .unwrap_or_else(|e| exit_with_error(e));
-            stdin_to_output(file, eol).unwrap_or_else(|e| exit_with_error(e));
+            stdin_to_output(file, eol, debug).unwrap_or_else(|e| exit_with_error(e));
         } else if sub_matches.get_flag("stdout") {
             if verbose {
                 eprintln!("Output target: stdout");
             }
-            let stdout = std::io::stdout().lock();
-            stdin_to_output(stdout, eol).unwrap_or_else(|e| exit_with_error(e));
+            let stdout = io::stdout().lock();
+            stdin_to_output(stdout, eol, debug).unwrap_or_else(|e| exit_with_error(e));
         };
 
         return Ok(());
@@ -222,7 +258,7 @@ fn main() -> Result<()> {
         eprintln!("Case-sensitive: {}", glob_options.case_sensitive);
     }
 
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = io::stdout().lock();
     for path in paths {
         if dry_run {
             writeln!(stdout, "{}", path.display())?;
@@ -231,7 +267,21 @@ fn main() -> Result<()> {
         if verbose {
             eprintln!("{}", path.display());
         }
-        process_file(&path, eol)?;
+        if debug {
+            // Yikes.
+            debug_assert!(path.is_file());
+            let input = File::open(path)?;
+            let input = BufReader::new(input);
+            let input = input
+                .bytes()
+                .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
+            let stdout = io::stdout().lock();
+            let mut output = writer(stdout, debug);
+            let transform = eol.transform_fn();
+            transform(input, &mut output)?;
+        } else {
+            process_file(&path, eol)?;
+        }
     }
 
     Ok(())
