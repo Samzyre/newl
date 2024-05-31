@@ -1,7 +1,7 @@
 cargo-features = ["edition2024"]
 
 [package]
-description = "A tool to change line endings in files."
+description = "A tool for converting line endings in files."
 edition = "2024"
 name = "newl"
 version = "0.1.0"
