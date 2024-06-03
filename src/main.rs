@@ -103,33 +103,32 @@ fn exit_with_error(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
-/// Read stdin input and write to `w` with the set end-of-line sequence.
+/// Read stdin and write to `output` with the set end-of-line sequence.
+/// `debug` flag sets output bytes `\r` and `\n` to be displayed as text.
 fn stdin_to_output(output: impl Write + 'static, eol: Eol, debug: bool) -> Result<()> {
     // NOTE: Windows stdin impl only supports UTF-8.
+    let mut output = writer(output, debug);
     let stdin = io::stdin().lock();
     let bytes = stdin
         .bytes()
         .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
-    let mut output = writer(output, debug);
     let transform = eol.transform_fn();
-    transform(bytes, &mut output)
+    transform(bytes, &mut output)?;
+    output.flush()?;
+    Ok(())
 }
 
 /// Apply a conversion to a file, this assumes that path is an accessible file.
-fn process_file(path: &Path, eol: Eol) -> Result<()> {
+fn file_to_output(path: &Path, mut output: impl Write, eol: Eol) -> Result<()> {
     debug_assert!(path.is_file());
     let input = File::open(path)?;
     let input = BufReader::new(input);
     let input = input
         .bytes()
         .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
-    let temp = temp_file::empty();
-    let output = OpenOptions::new().write(true).open(temp.path())?;
-    let mut output = BufWriter::new(output);
     let transform = eol.transform_fn();
     transform(input, &mut output)?;
     output.flush()?;
-    fs::copy(temp.path(), path)?;
     Ok(())
 }
 
@@ -256,19 +255,15 @@ fn main() -> Result<()> {
             eprintln!("{}", path.display());
         }
         if debug {
-            // Yikes.
-            debug_assert!(path.is_file());
-            let input = File::open(path)?;
-            let input = BufReader::new(input);
-            let input = input
-                .bytes()
-                .map(|r| r.unwrap_or_else(|e| exit_with_error(e)));
             let stdout = io::stdout().lock();
-            let mut output = writer(stdout, debug);
-            let transform = eol.transform_fn();
-            transform(input, &mut output)?;
+            let output = writer(stdout, debug);
+            file_to_output(&path, output, eol)?;
         } else {
-            process_file(&path, eol)?;
+            let temp = temp_file::empty();
+            let output = OpenOptions::new().write(true).open(temp.path())?;
+            let output = BufWriter::new(output);
+            file_to_output(&path, output, eol)?;
+            fs::copy(temp.path(), path)?;
         }
     }
 
