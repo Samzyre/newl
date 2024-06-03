@@ -50,7 +50,10 @@ fn cli() -> Command {
             Arg::new("case-sensitive")
                 .short('c')
                 .long("case-sensitive")
-                .help("Use case sensitive matching in patterns (on Windows).")
+                .help(
+                    "Use case sensitive matching in patterns (on Windows). NOTE: Does nothing on \
+                     exact paths.",
+                )
                 .action(ArgAction::SetTrue),
         )
         .arg(
