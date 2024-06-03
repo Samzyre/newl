@@ -9,6 +9,10 @@
   _(On other operating systems the shell may do glob expansions.)_
 - It can also use bytes from standard input stream and write the converted data to a file.
 
+# Install
+
+`cargo install --git https://github.com/Samzyre/newl.git`
+
 # Help
 
 ```
@@ -25,8 +29,7 @@ Arguments:
 Options:
   -e, --exclude <PATTERN>...  Exclude filepaths with a pattern. (appending)
   -l, --eol <EOL>             Set line ending sequence to convert to. [default: LF] [possible values: LF, CRLF, CR]
-  -o, --output <DIR>          Output directory of converted files, otherwise replace original files.
-  -c, --case-sensitive        Use case sensitive matching in patterns (on Windows).
+  -c, --case-sensitive        Use case sensitive matching in patterns (on Windows). NOTE: Does nothing on exact paths.
   -n, --dry-run               Print filepaths that would be affected, without modifying files.
   -d, --debug                 Print output bytes as debug representation to stdout.
   -v, --verbose               Print out debug information to stderr.
