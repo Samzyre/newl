@@ -47,14 +47,6 @@ fn cli() -> Command {
                 .global(true),
         )
         .arg(
-            Arg::new("output")
-                .short('o')
-                .long("output")
-                .help("Output directory of converted files, otherwise replace original files.")
-                .value_name("DIR")
-                .num_args(1),
-        )
-        .arg(
             Arg::new("case-sensitive")
                 .short('c')
                 .long("case-sensitive")
@@ -225,10 +217,6 @@ fn main() -> Result<()> {
         case_sensitive: matches.get_flag("case-sensitive"),
         ..Default::default()
     };
-
-    if matches.get_one::<String>("output").is_some() {
-        todo!("wip"); // TODO: To be implemented.
-    }
 
     let excluded = match matches.get_many::<String>("exclude") {
         Some(values) => values
